@@ -25,9 +25,26 @@
     <link rel="apple-touch-startup-image" href="/splash/750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
     <link rel="apple-touch-startup-image" href="/splash/1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
     <link rel="apple-touch-startup-image" href="/splash/1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+    <style>
+      html, body { margin: 0; background: #020617; }
+      #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+        background: #020617; color: #94a3b8; font: 600 14px -apple-system, system-ui, sans-serif; }
+      #boot img { width: 84px; height: 84px; border-radius: 20px; }
+      #boot small { font-weight: 400; font-size: 12px; opacity: .7; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot"><img src="/apple-touch-icon.png" alt="" /><span>PromptVault Pro</span><small id="boot-msg">Memuat…</small></div>
+    </div>
+    <noscript><p style="color:#e2e8f0;text-align:center;font-family:sans-serif">Aktifkan JavaScript untuk memakai PromptVault.</p></noscript>
+    <script>
+      // Kalau app belum muncul dalam 10 detik, tampilkan petunjuk (bukan layar kosong)
+      setTimeout(function () {
+        var m = document.getElementById('boot-msg');
+        if (m) m.textContent = 'Lama banget? Tutup lalu buka ulang app, atau cek koneksi.';
+      }, 10000);
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
