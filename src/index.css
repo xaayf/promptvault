@@ -35,3 +35,23 @@ input, textarea, select, .select-all, .select-text { -webkit-user-select: text; 
 .custom-scrollbar { -webkit-overflow-scrolling: touch; }
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(99,102,241,.35); border-radius: 4px; }
+
+/* ---- Tipografi form & konten ---- */
+.pv-label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; color: #94a3b8; }
+.pv-field {
+  width: 100%;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-size: 16px; line-height: 1.55; letter-spacing: 0;
+  padding: 11px 14px;
+  overflow-wrap: anywhere;
+}
+select.pv-field { padding-right: 36px; text-overflow: ellipsis; }
+.pv-field.font-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; }
+.pv-prose {
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; text-wrap: pretty;
+}
+@media (min-width: 768px) {
+  .pv-field { font-size: 14px; }
+  .pv-prose { font-size: 15px; }
+}

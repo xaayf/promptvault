@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, Component } from 'react';
 import {
   FolderPlus, Folder, ChevronRight, Plus, Search, Copy, Check, Sparkles, Trash2, Edit3,
   Sun, Moon, Download, RefreshCw, ChevronLeft, Tag, FileText,
@@ -106,6 +106,36 @@ const idbSet = async (key, val) => {
     tx.objectStore('kv').put(val, key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+  });
+};
+
+// Textarea yang tinggi-nya mengikuti isi (tidak ada teks terpotong), batas maksimal % tinggi layar
+function AutoTextarea({ value, onChange, minRows = 3, maxVh = 42, className = '', ...rest }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const max = Math.round(window.innerHeight * maxVh / 100);
+    el.style.height = Math.min(el.scrollHeight, max) + 'px';
+    el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
+  }, [value, maxVh]);
+  return <textarea ref={ref} rows={minRows} value={value} onChange={onChange} className={className} {...rest} />;
+}
+
+// Arahan visual: baris "Label: isi" ditampilkan dengan label tebal supaya mudah dipindai
+const renderVisual = (text, isDark) => {
+  const src = text.includes('\n') ? text : text.replace(/([.!?])\s+(?=[A-Z][A-Za-z&/' -]{2,26}:\s)/g, '$1\n');
+  return src.split('\n').filter(l => l.trim()).map((line, i) => {
+    const m = line.match(/^\s*[-•*]?\s*([^:\n]{2,28}):\s*(.*)$/);
+    return m ? (
+      <p key={i} className="mt-2 first:mt-0">
+        <span className={`font-semibold ${isDark ? 'text-fuchsia-300' : 'text-fuchsia-700'}`}>{m[1]}</span>
+        <span className="text-slate-500">: </span>{m[2]}
+      </p>
+    ) : (
+      <p key={i} className="mt-2 first:mt-0">{line}</p>
+    );
   });
 };
 
@@ -651,7 +681,7 @@ function PromptVaultApp() {
       const systemPrompt = `You are an expert prompt engineer and art director. You receive a prompt that the user saved in their prompt library (it may be a rough idea).
 1) Detect what the prompt is for (image/poster/artwork, coding, writing, analysis, etc).
 2) Rewrite it into a clearer, well-structured, more effective prompt. Keep the user's intent, language, and any {variables}. Do not invent unrelated requirements.
-3) Infer the best visual direction. For image/poster/artwork prompts give concrete art direction: focal subject, composition and camera angle, lighting, color palette, style/technique, mood, background, aspect-ratio hints. Use original designs only: no copyrighted characters, brands, logos or living artists' names. For non-visual prompts, give a short output direction instead (format, structure, tone, layout of the answer).
+3) Infer the best visual direction. For image/poster/artwork prompts give concrete art direction: focal subject, composition and camera angle, lighting, color palette, style/technique, mood, background, aspect-ratio hints. Use original designs only: no copyrighted characters, brands, logos or living artists' names. For non-visual prompts, give a short output direction instead (format, structure, tone, layout of the answer). Format visual_direction as 4-8 short lines separated by newline characters, each line 'Label: value' (e.g. 'Objek utama: ...', 'Komposisi: ...', 'Cahaya: ...', 'Palet: ...', 'Gaya: ...', 'Mood: ...'), labels in the same language as the user's prompt.
 4) Suggest 2-5 short tags.
 5) Add a one-sentence note in Indonesian: what you improved and which direction you chose.
 Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_direction": string, "tags": string[], "note": string}. Write improved_prompt and visual_direction in the same language as the user's prompt.`;
@@ -974,12 +1004,12 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-800/20">
                       <div className="flex items-center space-x-1 overflow-hidden">
                         {(p.tags || []).slice(0, 2).map(tag => (
-                          <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-mono">
+                          <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-mono">
                             #{tag}
                           </span>
                         ))}
                       </div>
-                      <span className="text-[9px] text-slate-500 shrink-0">
+                      <span className="text-[10px] text-slate-500 shrink-0">
                         {new Date(p.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                       </span>
                     </div>
@@ -1001,7 +1031,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                       {activeFolder?.name}
                     </span>
                   </div>
-                  <h1 className="text-lg md:text-2xl font-bold tracking-tight">{activePrompt.title}</h1>
+                  <h1 className="text-xl md:text-2xl font-bold tracking-tight leading-snug text-balance break-words">{activePrompt.title}</h1>
                 </div>
 
                 <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
@@ -1055,8 +1085,8 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
               )}
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Isi Prompt Vault</label>
-                <div className={`p-4 md:p-5 rounded-2xl border font-mono text-xs md:text-sm leading-relaxed whitespace-pre-wrap select-all ${
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Isi Prompt</label>
+                <div className={`p-4 md:p-5 rounded-2xl border pv-prose whitespace-pre-wrap select-all ${
                   isDark ? 'bg-slate-950/80 border-slate-800/80 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'
                 }`}>
                   {activePrompt.content}
@@ -1066,7 +1096,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
               {activePrompt.visualDirection && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-semibold uppercase tracking-wider text-fuchsia-400">Arahan Visual</label>
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-400">Arahan Visual</label>
                     <button
                       onClick={() => copyToClipboard(activePrompt.visualDirection, `${activePrompt.id}-v`)}
                       className={`px-2 py-1 rounded-lg text-[11px] flex items-center space-x-1 border ${isDark ? UI_STYLES.btnSecondaryDark : UI_STYLES.btnSecondaryLight}`}
@@ -1075,10 +1105,10 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                       <span>{copiedId === `${activePrompt.id}-v` ? 'Tersalin!' : 'Salin'}</span>
                     </button>
                   </div>
-                  <div className={`p-4 md:p-5 rounded-2xl border text-xs md:text-sm leading-relaxed whitespace-pre-wrap select-all ${
+                  <div className={`p-4 md:p-5 rounded-2xl border pv-prose select-all ${
                     isDark ? 'bg-fuchsia-950/20 border-fuchsia-500/30 text-slate-200' : 'bg-fuchsia-50 border-fuchsia-200 text-slate-800'
                   }`}>
-                    {activePrompt.visualDirection}
+                    {renderVisual(activePrompt.visualDirection, isDark)}
                   </div>
                 </div>
               )}
@@ -1104,7 +1134,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
             </h3>
             <form onSubmit={handleSaveFolder} className="space-y-3">
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">
+                <label className="pv-label">
                   {editingFolderId ? 'Nama Folder' : 'Nama Folder (Opsional - Auto Detect)'}
                 </label>
                 <input 
@@ -1118,17 +1148,17 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                       setSelectedFolderIcon(detected.icon);
                     }
                   }}
-                  className={`w-full text-xs p-3 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Lokasi (Folder Induk)</label>
+                <label className="pv-label">Lokasi (Folder Induk)</label>
                 <select
                   value={folderParentId || ''}
                   onChange={(e) => setFolderParentId(e.target.value || null)}
-                  className={`w-full text-xs p-3 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                 >
                   <option value="" className={isDark ? 'bg-slate-900' : 'bg-white'}>Root (paling atas)</option>
                   {flattenTree(
@@ -1143,7 +1173,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1.5">Pilih Ikon Monoline</label>
+                <label className="pv-label">Pilih Ikon Monoline</label>
                 <div className="grid grid-cols-6 gap-1.5">
                   {AVAILABLE_ICONS.map(iconName => {
                     const IconComp = ICON_MAP[iconName] || Folder;
@@ -1185,11 +1215,11 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
 
       {/* MODAL 2: Add / Edit Prompt */}
       {isPromptModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start md:items-center justify-center p-4 pt-[calc(env(safe-area-inset-top)+1rem)] bg-black/60 backdrop-blur-sm overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-start md:items-center justify-center p-4 pt-[calc(env(safe-area-inset-top)+1rem)] pb-[calc(env(safe-area-inset-bottom)+1rem)] bg-black/60 backdrop-blur-sm overflow-y-auto">
           <div className={`w-full max-w-xl p-5 my-4 rounded-3xl space-y-4 shadow-2xl ${glassStyle}`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold">
-                {editingPrompt.id ? 'Edit Prompt Vault' : 'Buat Prompt Baru'}
+              <h3 className="text-base font-bold tracking-tight">
+                {editingPrompt.id ? 'Edit Prompt' : 'Buat Prompt Baru'}
               </h3>
               <button 
                 type="button"
@@ -1203,23 +1233,23 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
 
             <form onSubmit={handleSavePrompt} className="space-y-3">
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Judul Prompt</label>
+                <label className="pv-label">Judul Prompt</label>
                 <input 
                   type="text" 
                   placeholder="Judul Prompt..." 
                   value={editingPrompt.title}
                   onChange={(e) => setEditingPrompt({...editingPrompt, title: e.target.value})}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                   required
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Folder Target</label>
+                <label className="pv-label">Folder Target</label>
                 <select 
                   value={editingPrompt.folderId || selectedFolderId}
                   onChange={(e) => setEditingPrompt({...editingPrompt, folderId: e.target.value})}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                 >
                   {flattenTree(folders, []).map(({ folder: f, depth }) => (
                     <option key={f.id} value={f.id} className={isDark ? 'bg-slate-900' : 'bg-white'}>
@@ -1230,36 +1260,38 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Tag (Pisahkan dengan koma)</label>
+                <label className="pv-label">Tag (Pisahkan dengan koma)</label>
                 <input 
                   type="text" 
                   placeholder="Coding, React" 
                   value={editingPrompt.tags}
                   onChange={(e) => setEditingPrompt({...editingPrompt, tags: e.target.value})}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Isi Prompt</label>
-                <textarea 
-                  rows={6}
-                  placeholder="Tulis instruksi prompt di sini..." 
+                <label className="pv-label">Isi Prompt</label>
+                <AutoTextarea
+                  minRows={5}
+                  maxVh={45}
+                  placeholder="Tulis instruksi prompt di sini..."
                   value={editingPrompt.content}
                   onChange={(e) => setEditingPrompt({...editingPrompt, content: e.target.value})}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none font-mono ${inputStyle}`}
+                  className={`pv-field w-full rounded-xl outline-none resize-none ${inputStyle}`}
                   required
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Arahan Visual (opsional)</label>
-                <textarea
-                  rows={4}
+                <label className="pv-label">Arahan Visual (opsional)</label>
+                <AutoTextarea
+                  minRows={4}
+                  maxVh={40}
                   placeholder="Objek utama, komposisi/sudut, pencahayaan, palet warna, gaya, mood... (atau biarkan AI Enhancer yang menentukan)"
                   value={editingPrompt.visualDirection}
                   onChange={(e) => setEditingPrompt({...editingPrompt, visualDirection: e.target.value})}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                  className={`pv-field w-full rounded-xl outline-none resize-none ${inputStyle}`}
                 />
               </div>
 
@@ -1274,7 +1306,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                 </div>
               )}
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className={`sticky bottom-0 -mx-5 -mb-5 px-5 py-3 flex justify-end space-x-2 rounded-b-3xl border-t backdrop-blur-md ${isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white/90 border-slate-200'}`}>
                 <button 
                   type="button" 
                   onClick={() => setIsPromptModalOpen(false)}
@@ -1316,7 +1348,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                   placeholder="Arahan tambahan (opsional), mis: bikin lebih gelap dan sinematik"
                   value={aiPromptInput}
                   onChange={(e) => setAiPromptInput(e.target.value)}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                 />
               </>
             ) : (
@@ -1329,7 +1361,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                   placeholder="Contoh: poster astronaut sendirian di padang bunga neon..."
                   value={aiPromptInput}
                   onChange={(e) => setAiPromptInput(e.target.value)}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none ${inputStyle}`}
                 />
               </>
             )}
@@ -1405,7 +1437,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                   placeholder="Tempel API key di sini..."
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}
-                  className={`w-full text-xs p-2.5 rounded-xl outline-none font-mono ${inputStyle}`}
+                  className={`w-full pv-field rounded-xl outline-none font-mono ${inputStyle}`}
                 />
                 <input
                   type="text"
@@ -1413,7 +1445,7 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                   placeholder="Nama model (default gemini-3-flash-preview)"
                   value={geminiModel}
                   onChange={(e) => setGeminiModel(e.target.value)}
-                  className={`w-full text-xs p-2.5 mt-2 rounded-xl outline-none font-mono ${inputStyle}`}
+                  className={`w-full pv-field mt-2 rounded-xl outline-none font-mono ${inputStyle}`}
                 />
                 <p className="text-[10px] text-slate-500 mt-1">Disimpan hanya di perangkat ini, tidak dikirim ke mana pun selain ke Google saat Generate.</p>
               </div>
