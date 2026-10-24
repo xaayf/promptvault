@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+html { background: #020617; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* teks prompt & input tetap bisa dipilih/disalin */
+input, textarea, select, .select-all, .select-text { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+
+/* iOS zoom otomatis saat fokus input kalau font < 16px */
+@media (max-width: 767px) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
+/* safe area iPhone (notch / home indicator) */
+.pv-root {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.pv-statusbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+  height: env(safe-area-inset-top); background: #020617; pointer-events: none;
+}
+
+.custom-scrollbar { -webkit-overflow-scrolling: touch; }
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(99,102,241,.35); border-radius: 4px; }
