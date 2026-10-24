@@ -264,6 +264,26 @@ function PromptVaultApp() {
   const [aiNote, setAiNote] = useState('');
 
   const fileInputRef = useRef(null);
+
+  // Banner "Update tersedia" (dari service worker, lihat main.jsx)
+  const [updateReady, setUpdateReady] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updateCheckMsg, setUpdateCheckMsg] = useState('');
+  useEffect(() => {
+    if (window.__pvWaiting) setUpdateReady(true);
+    const onUpdate = () => { setUpdateReady(true); setUpdateDismissed(false); };
+    window.addEventListener('pv-update-available', onUpdate);
+    return () => window.removeEventListener('pv-update-available', onUpdate);
+  }, []);
+  const checkForUpdate = async () => {
+    if (!window.__pvCheckUpdate) { setUpdateCheckMsg('Cek update hanya aktif di versi online (setelah di-deploy).'); return; }
+    setUpdateCheckMsg('Memeriksa...');
+    try {
+      const has = await window.__pvCheckUpdate();
+      setUpdateCheckMsg(has ? 'Update tersedia! Tekan Perbarui.' : 'Sudah versi terbaru.');
+      if (has) { setUpdateReady(true); setUpdateDismissed(false); setIsSettingsOpen(false); }
+    } catch (e) { setUpdateCheckMsg('Gagal memeriksa. Cek koneksi.'); }
+  };
   // true kalau localStorage kosong saat app dibuka (dicek sebelum apa pun ditulis)
   const localWasEmpty = useRef((() => { try { return localStorage.getItem('pv_folders') === null; } catch (e) { return true; } })());
   const [idbReady, setIdbReady] = useState(false);
@@ -707,6 +727,29 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
     <div className={`pv-root h-[100dvh] flex flex-col font-sans transition-colors duration-300 overflow-hidden selection:bg-indigo-500 selection:text-white ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
       
       <div className="pv-statusbar" />
+
+      {updateReady && !updateDismissed && (
+        <div
+          role="status"
+          className="fixed left-3 right-3 z-[70] flex items-center justify-between gap-3 px-4 py-3 rounded-2xl text-white shadow-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600"
+          style={{ top: 'calc(env(safe-area-inset-top) + 8px)' }}
+        >
+          <div className="min-w-0">
+            <div className="text-xs font-bold">Update tersedia</div>
+            <div className="text-[11px] opacity-90">Versi baru PromptVault siap dipasang. Datamu tetap aman.</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => setUpdateDismissed(true)} className="text-[11px] opacity-80 px-2 py-1">Nanti</button>
+            <button
+              onClick={() => window.__pvApplyUpdate?.()}
+              className="text-xs font-semibold bg-white text-indigo-700 px-3 py-1.5 rounded-xl active:scale-95"
+            >
+              Perbarui
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className={`absolute -top-40 -left-40 w-80 h-80 rounded-full blur-3xl opacity-30 ${isDark ? 'bg-indigo-600/40' : 'bg-indigo-300/60'}`} />
         <div className={`absolute top-1/2 -right-40 w-80 h-80 rounded-full blur-3xl opacity-20 ${isDark ? 'bg-purple-600/40' : 'bg-purple-300/60'}`} />
@@ -1373,6 +1416,19 @@ Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_dir
                   className={`w-full text-xs p-2.5 mt-2 rounded-xl outline-none font-mono ${inputStyle}`}
                 />
                 <p className="text-[10px] text-slate-500 mt-1">Disimpan hanya di perangkat ini, tidak dikirim ke mana pun selain ke Google saat Generate.</p>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">Pembaruan Aplikasi</label>
+                <button
+                  type="button"
+                  onClick={checkForUpdate}
+                  className={`w-full py-2 rounded-xl text-xs flex items-center justify-center space-x-1 border ${isDark ? UI_STYLES.btnSecondaryDark : UI_STYLES.btnSecondaryLight}`}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Cek pembaruan</span>
+                </button>
+                {updateCheckMsg && <p className="text-[10px] text-slate-400 mt-1">{updateCheckMsg}</p>}
               </div>
 
               <div>

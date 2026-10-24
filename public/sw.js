@@ -1,9 +1,20 @@
-// PromptVault service worker: offline shell. Data user ada di localStorage, bukan di sini.
-const CACHE = 'promptvault-v1';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.svg', '/apple-touch-icon.png', '/icons/icon-192.png', '/icons/icon-512.png'];
+// PromptVault service worker. Data user ada di localStorage/IndexedDB, bukan di cache ini.
+// ID build dan daftar aset diisi otomatis saat build (lihat vite.config.js),
+// supaya setiap rilis baru terdeteksi sebagai "update tersedia".
+const BUILD_ID = '__BUILD_ID__';
+const CACHE = 'promptvault-' + BUILD_ID;
+const ASSETS = /*__PRECACHE__*/[];
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.svg', '/apple-touch-icon.png', '/icons/icon-192.png', '/icons/icon-512.png', ...ASSETS];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Tidak skipWaiting otomatis: versi baru menunggu sampai user menekan "Perbarui" di app.
+  e.waitUntil(
+    caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+  );
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
@@ -34,19 +45,17 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Aset: stale-while-revalidate
+  // Aset: cache dulu (sudah di-precache), lalu jaringan
   e.respondWith(
     caches.match(req).then((cached) => {
-      const fresh = fetch(req)
-        .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fresh;
+      if (cached) return cached;
+      return fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      });
     })
   );
 });
