@@ -84,6 +84,31 @@ const getFolderPath = (folders, id) => {
   return path;
 };
 
+// ---- Salinan cadangan kedua di IndexedDB (jaga-jaga localStorage kosong/terhapus) ----
+const idbOpen = () => new Promise((resolve, reject) => {
+  const req = indexedDB.open('promptvault', 1);
+  req.onupgradeneeded = () => req.result.createObjectStore('kv');
+  req.onsuccess = () => resolve(req.result);
+  req.onerror = () => reject(req.error);
+});
+const idbGet = async (key) => {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const r = db.transaction('kv').objectStore('kv').get(key);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+};
+const idbSet = async (key, val) => {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(val, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
 const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 const loadFolders = () => {
@@ -140,6 +165,9 @@ function PromptVaultApp() {
   const [geminiKey, setGeminiKey] = useState(loadKey);
 
   const fileInputRef = useRef(null);
+  // true kalau localStorage kosong saat app dibuka (dicek sebelum apa pun ditulis)
+  const localWasEmpty = useRef((() => { try { return localStorage.getItem('pv_folders') === null; } catch (e) { return true; } })());
+  const [idbReady, setIdbReady] = useState(false);
 
   const addLog = (msg, type = 'info') => {
     const time = new Date().toLocaleTimeString();
@@ -163,6 +191,35 @@ function PromptVaultApp() {
   useEffect(() => {
     try { localStorage.setItem('pv_collapsed', JSON.stringify(collapsedIds)); } catch (e) {}
   }, [collapsedIds]);
+
+  // Pulihkan dari IndexedDB kalau localStorage kosong (mis. dibersihkan sistem)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (localWasEmpty.current) {
+          const saved = await idbGet('folders');
+          if (!cancelled && Array.isArray(saved) && saved.length > 0) {
+            const restored = normalizeFolders(saved);
+            setFolders(restored);
+            setSelectedFolderId(restored[0].id);
+            addLog('Data dipulihkan otomatis dari salinan cadangan.', 'success');
+          }
+        }
+      } catch (e) {
+        addLog('Cadangan IndexedDB tidak tersedia.', 'warn');
+      } finally {
+        if (!cancelled) setIdbReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Tulis salinan cadangan setiap data berubah (setelah proses pemulihan selesai)
+  useEffect(() => {
+    if (!idbReady) return;
+    idbSet('folders', folders).catch(() => {});
+  }, [folders, idbReady]);
 
   // Tema: simpan + sinkronkan warna latar html
   useEffect(() => {
