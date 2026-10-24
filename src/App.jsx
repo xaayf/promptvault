@@ -111,6 +111,99 @@ const idbSet = async (key, val) => {
 
 const GEMINI_MODEL = 'gemini-3-flash-preview';
 
+// ---- CSV backup (bisa dibuka di Excel / Google Sheets / Numbers) ----
+const CSV_HEADERS = ['folder_id', 'parent_id', 'folder_name', 'folder_icon', 'prompt_id', 'prompt_title', 'prompt_content', 'tags', 'visual_direction', 'favorite', 'updated_at'];
+
+// Cegah formula injection saat dibuka di spreadsheet: sel berawalan = + - @ diberi tanda '
+const csvGuard = (v) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
+const csvUnguard = (v) => (/^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v);
+const csvCell = (v) => {
+  const str = csvGuard(String(v ?? ''));
+  return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+};
+
+const foldersToCsv = (folders) => {
+  const lines = [CSV_HEADERS.join(',')];
+  flattenTree(folders, []).forEach(({ folder: f }) => {
+    const base = [f.id, f.parentId || '', f.name, f.icon || 'Folder'];
+    const prompts = f.prompts || [];
+    if (prompts.length === 0) {
+      lines.push([...base, '', '', '', '', '', '', ''].map(csvCell).join(','));
+    } else {
+      prompts.forEach(pr => {
+        lines.push([
+          ...base, pr.id, pr.title, pr.content, (pr.tags || []).join(', '),
+          pr.visualDirection || '', pr.isFavorite ? 'true' : 'false',
+          pr.updatedAt ? new Date(pr.updatedAt).toISOString() : ''
+        ].map(csvCell).join(','));
+      });
+    }
+  });
+  return '\uFEFF' + lines.join('\r\n');
+};
+
+const parseCsv = (text) => {
+  const rows = [];
+  let row = [], cell = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; } else inQuotes = false;
+      } else cell += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      rows.push(row); row = [];
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ''));
+};
+
+const foldersFromCsv = (text) => {
+  const rows = parseCsv(text.replace(/^\uFEFF/, ''));
+  if (rows.length < 2) throw new Error('CSV kosong');
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  if (!head.includes('folder_name')) throw new Error('Kolom folder_name tidak ditemukan');
+  const col = (r, name) => { const i = head.indexOf(name); return i >= 0 ? (r[i] ?? '') : ''; };
+  const map = new Map();
+  let n = 0;
+  const stamp = Date.now();
+  rows.slice(1).forEach(r => {
+    const fid = col(r, 'folder_id').trim();
+    const fname = csvUnguard(col(r, 'folder_name')).trim();
+    if (!fid && !fname) return;
+    const key = fid || `name:${fname}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        id: fid || `f-imp-${stamp}-${n++}`,
+        name: fname || 'Folder',
+        icon: col(r, 'folder_icon').trim() || 'Folder',
+        parentId: col(r, 'parent_id').trim() || null,
+        createdAt: stamp,
+        prompts: []
+      });
+    }
+    const title = csvUnguard(col(r, 'prompt_title'));
+    const content = csvUnguard(col(r, 'prompt_content'));
+    if (title.trim() || content.trim()) {
+      map.get(key).prompts.push({
+        id: col(r, 'prompt_id').trim() || `p-imp-${stamp}-${n++}`,
+        title: title || 'Tanpa judul',
+        content,
+        tags: col(r, 'tags').split(',').map(t => t.trim()).filter(Boolean),
+        visualDirection: csvUnguard(col(r, 'visual_direction')),
+        isFavorite: ['true', '1', 'ya', 'yes'].includes(col(r, 'favorite').trim().toLowerCase()),
+        updatedAt: Date.parse(col(r, 'updated_at')) || stamp
+      });
+    }
+  });
+  return Array.from(map.values());
+};
+
 const loadFolders = () => {
   try {
     const raw = localStorage.getItem('pv_folders');
@@ -130,6 +223,9 @@ const loadTheme = () => {
     if (t) return t === 'dark';
   } catch (e) {}
   return true;
+};
+const loadModel = () => {
+  try { return localStorage.getItem('pv_gemini_model') || GEMINI_MODEL; } catch (e) { return GEMINI_MODEL; }
 };
 const loadKey = () => {
   try { return localStorage.getItem('pv_gemini_key') || ''; } catch (e) { return ''; }
@@ -156,13 +252,16 @@ function PromptVaultApp() {
   const [collapsedIds, setCollapsedIds] = useState(loadCollapsed);
 
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
-  const [editingPrompt, setEditingPrompt] = useState({ id: null, title: '', content: '', tags: '', folderId: '' });
+  const [editingPrompt, setEditingPrompt] = useState({ id: null, title: '', content: '', tags: '', visualDirection: '', folderId: '' });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [aiPromptInput, setAiPromptInput] = useState('');
   const [showAiModal, setShowAiModal] = useState(false);
   const [geminiKey, setGeminiKey] = useState(loadKey);
+  const [geminiModel, setGeminiModel] = useState(loadModel);
+  const [aiBackup, setAiBackup] = useState(null);
+  const [aiNote, setAiNote] = useState('');
 
   const fileInputRef = useRef(null);
   // true kalau localStorage kosong saat app dibuka (dicek sebelum apa pun ditulis)
@@ -231,6 +330,10 @@ function PromptVaultApp() {
     try { localStorage.setItem('pv_gemini_key', geminiKey); } catch (e) {}
   }, [geminiKey]);
 
+  useEffect(() => {
+    try { localStorage.setItem('pv_gemini_model', geminiModel); } catch (e) {}
+  }, [geminiModel]);
+
   // Minta penyimpanan persisten supaya data tidak dibersihkan sistem
   useEffect(() => {
     const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -250,7 +353,8 @@ function PromptVaultApp() {
     if (!activeFolder) return [];
     return (activeFolder.prompts || []).filter(p => {
       const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            p.content.toLowerCase().includes(searchQuery.toLowerCase());
+                            p.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            (p.visualDirection || '').toLowerCase().includes(searchQuery.toLowerCase());
       const matchesTag = !selectedTag || (p.tags && p.tags.includes(selectedTag));
       return matchesSearch && matchesTag;
     });
@@ -371,6 +475,7 @@ function PromptVaultApp() {
         id: editingPrompt.id,
         title: editingPrompt.title,
         content: editingPrompt.content,
+        visualDirection: editingPrompt.visualDirection || '',
         tags: tagArray,
         updatedAt: Date.now()
       };
@@ -386,6 +491,7 @@ function PromptVaultApp() {
         id: `p-${Date.now()}`,
         title: editingPrompt.title,
         content: editingPrompt.content,
+        visualDirection: editingPrompt.visualDirection || '',
         tags: tagArray,
         isFavorite: false,
         updatedAt: Date.now()
@@ -398,7 +504,9 @@ function PromptVaultApp() {
     }
 
     setIsPromptModalOpen(false);
-    setEditingPrompt({ id: null, title: '', content: '', tags: '', folderId: '' });
+    setEditingPrompt({ id: null, title: '', content: '', tags: '', visualDirection: '', folderId: '' });
+    setAiBackup(null);
+    setAiNote('');
     setMobileView('detail');
   };
 
@@ -448,14 +556,14 @@ function PromptVaultApp() {
   };
 
   const handleExportBackup = async () => {
-    const json = JSON.stringify(folders, null, 2);
-    const filename = `PromptVault_Backup_${new Date().toISOString().slice(0, 10)}.json`;
-    const file = new File([json], filename, { type: 'application/json' });
+    const csv = foldersToCsv(folders);
+    const filename = `PromptVault_Backup_${new Date().toISOString().slice(0, 10)}.csv`;
+    const file = new File([csv], filename, { type: 'text/csv' });
     try {
       // iPhone: lewat lembar Bagikan (simpan ke Files / AirDrop / dll)
       if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({ files: [file], title: 'PromptVault Backup' });
-        addLog('Backup dibagikan lewat lembar Bagikan.', 'success');
+        addLog('Backup CSV dibagikan lewat lembar Bagikan.', 'success');
         return;
       }
     } catch (err) {
@@ -469,7 +577,7 @@ function PromptVaultApp() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    addLog('Ekspor data cadangan JSON berhasil.', 'success');
+    addLog('Ekspor backup CSV berhasil.', 'success');
   };
 
   const handleImportBackup = (e) => {
@@ -478,28 +586,41 @@ function PromptVaultApp() {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const imported = JSON.parse(event.target.result);
+        const text = String(event.target.result || '');
+        // CSV (baru) atau JSON (backup lama)
+        const imported = text.trimStart().startsWith('[') ? JSON.parse(text) : foldersFromCsv(text);
         if (Array.isArray(imported) && imported.length > 0 && imported[0].prompts) {
           if (!confirm('Impor akan MENGGANTI semua data vault saat ini. Lanjut?')) return;
           const normalized = normalizeFolders(imported);
           mutateFolders(() => normalized);
           setSelectedFolderId(normalized[0].id);
           setSelectedPromptId(null);
-          addLog('Import data vault JSON berhasil!', 'success');
+          addLog('Import data vault berhasil!', 'success');
           alert('Data Prompt Vault berhasil diimpor!');
         } else {
-          alert('Format JSON tidak valid.');
+          alert('Format file tidak valid.');
         }
       } catch (err) {
-        alert('Gagal membaca file JSON cadangan.');
+        alert(`Gagal membaca file backup: ${err.message}`);
       }
     };
     reader.readAsText(file);
     e.target.value = '';
   };
 
+  const parseAiJson = (text) => {
+    const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    try { return JSON.parse(cleaned); } catch (e) {}
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
+    throw new Error('Respons AI bukan JSON.');
+  };
+
+  // AI Enhancer: baca prompt di form, perbaiki, dan tentukan arahan visual otomatis
   const handleEnhancePromptWithAI = async () => {
-    if (!aiPromptInput.trim()) return;
+    const hasContent = editingPrompt.content.trim().length > 0;
+    const source = hasContent ? editingPrompt.content : aiPromptInput;
+    if (!source.trim()) return;
     if (!geminiKey.trim()) {
       alert('Isi dulu Gemini API Key di Pengaturan (ikon gerigi).');
       return;
@@ -507,16 +628,28 @@ function PromptVaultApp() {
     setIsAiGenerating(true);
 
     try {
-      const systemPrompt = "Act as an expert prompt engineer. Enhance and refine the user's rough prompt idea into a structured, highly effective, professional system prompt for LLMs. Include guidelines, variables, and ideal tone.";
-      const userQuery = `Refine this prompt idea: "${aiPromptInput}"`;
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+      const systemPrompt = `You are an expert prompt engineer and art director. You receive a prompt that the user saved in their prompt library (it may be a rough idea).
+1) Detect what the prompt is for (image/poster/artwork, coding, writing, analysis, etc).
+2) Rewrite it into a clearer, well-structured, more effective prompt. Keep the user's intent, language, and any {variables}. Do not invent unrelated requirements.
+3) Infer the best visual direction. For image/poster/artwork prompts give concrete art direction: focal subject, composition and camera angle, lighting, color palette, style/technique, mood, background, aspect-ratio hints. Use original designs only: no copyrighted characters, brands, logos or living artists' names. For non-visual prompts, give a short output direction instead (format, structure, tone, layout of the answer).
+4) Suggest 2-5 short tags.
+5) Add a one-sentence note in Indonesian: what you improved and which direction you chose.
+Respond ONLY with JSON: {"title": string, "improved_prompt": string, "visual_direction": string, "tags": string[], "note": string}. Write improved_prompt and visual_direction in the same language as the user's prompt.`;
+      const parts = [
+        `Title: ${editingPrompt.title || '(none)'}`,
+        `Prompt:\n${source}`,
+        editingPrompt.visualDirection?.trim() ? `Current visual direction (improve it, keep the user's intent):\n${editingPrompt.visualDirection}` : '',
+        hasContent && aiPromptInput.trim() ? `Extra instruction from user:\n${aiPromptInput}` : ''
+      ].filter(Boolean).join('\n\n');
 
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel.trim() || GEMINI_MODEL)}:generateContent`;
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey.trim() },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: userQuery }] }],
-          systemInstruction: { parts: [{ text: systemPrompt }] }
+          contents: [{ parts: [{ text: parts }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { responseMimeType: 'application/json' }
         })
       });
 
@@ -524,12 +657,29 @@ function PromptVaultApp() {
       if (!response.ok) throw new Error(data?.error?.message || `HTTP ${response.status}`);
       const generatedText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!generatedText) throw new Error('Respons AI kosong.');
+      const result = parseAiJson(generatedText);
+      if (!result.improved_prompt) throw new Error('Respons AI tidak berisi prompt.');
 
-      setEditingPrompt(prev => ({
-        ...prev,
-        title: prev.title || aiPromptInput.slice(0, 30) + " (AI)",
-        content: generatedText
-      }));
+      // simpan versi sebelum AI supaya bisa dikembalikan
+      setAiBackup({
+        title: editingPrompt.title,
+        content: editingPrompt.content,
+        visualDirection: editingPrompt.visualDirection,
+        tags: editingPrompt.tags
+      });
+      setEditingPrompt(prev => {
+        const existingTags = String(prev.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+        const aiTags = Array.isArray(result.tags) ? result.tags.map(t => String(t).replace(/^#/, '').trim()).filter(Boolean) : [];
+        const mergedTags = [...existingTags, ...aiTags.filter(t => !existingTags.some(x => x.toLowerCase() === t.toLowerCase()))];
+        return {
+          ...prev,
+          title: prev.title || result.title || source.slice(0, 30) + ' (AI)',
+          content: result.improved_prompt,
+          visualDirection: result.visual_direction || prev.visualDirection || '',
+          tags: mergedTags.join(', ')
+        };
+      });
+      setAiNote(result.note || 'Prompt dan arahan visual diperbarui oleh AI.');
 
       setShowAiModal(false);
       setAiPromptInput('');
@@ -540,6 +690,13 @@ function PromptVaultApp() {
     } finally {
       setIsAiGenerating(false);
     }
+  };
+
+  const restoreBeforeAi = () => {
+    if (!aiBackup) return;
+    setEditingPrompt(prev => ({ ...prev, ...aiBackup }));
+    setAiBackup(null);
+    setAiNote('');
   };
 
   const isDark = isDarkMode;
@@ -723,7 +880,9 @@ function PromptVaultApp() {
             </h2>
             <button 
               onClick={() => {
-                setEditingPrompt({ id: null, title: '', content: '', tags: '', folderId: selectedFolderId });
+                setEditingPrompt({ id: null, title: '', content: '', tags: '', visualDirection: '', folderId: selectedFolderId });
+                setAiBackup(null);
+                setAiNote('');
                 setIsPromptModalOpen(true);
               }}
               className={`px-2.5 py-1.5 rounded-xl text-xs flex items-center space-x-1 shrink-0 ${UI_STYLES.btnPrimary}`}
@@ -818,8 +977,11 @@ function PromptVaultApp() {
                         title: activePrompt.title,
                         content: activePrompt.content,
                         tags: (activePrompt.tags || []).join(', '),
+                        visualDirection: activePrompt.visualDirection || '',
                         folderId: selectedFolderId
                       });
+                      setAiBackup(null);
+                      setAiNote('');
                       setIsPromptModalOpen(true);
                     }}
                     className={`p-2 rounded-xl text-xs border ${isDark ? UI_STYLES.btnSecondaryDark : UI_STYLES.btnSecondaryLight}`}
@@ -857,6 +1019,26 @@ function PromptVaultApp() {
                   {activePrompt.content}
                 </div>
               </div>
+
+              {activePrompt.visualDirection && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-fuchsia-400">Arahan Visual</label>
+                    <button
+                      onClick={() => copyToClipboard(activePrompt.visualDirection, `${activePrompt.id}-v`)}
+                      className={`px-2 py-1 rounded-lg text-[11px] flex items-center space-x-1 border ${isDark ? UI_STYLES.btnSecondaryDark : UI_STYLES.btnSecondaryLight}`}
+                    >
+                      {copiedId === `${activePrompt.id}-v` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedId === `${activePrompt.id}-v` ? 'Tersalin!' : 'Salin'}</span>
+                    </button>
+                  </div>
+                  <div className={`p-4 md:p-5 rounded-2xl border text-xs md:text-sm leading-relaxed whitespace-pre-wrap select-all ${
+                    isDark ? 'bg-fuchsia-950/20 border-fuchsia-500/30 text-slate-200' : 'bg-fuchsia-50 border-fuchsia-200 text-slate-800'
+                  }`}>
+                    {activePrompt.visualDirection}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
@@ -1027,6 +1209,28 @@ function PromptVaultApp() {
                 />
               </div>
 
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">Arahan Visual (opsional)</label>
+                <textarea
+                  rows={4}
+                  placeholder="Objek utama, komposisi/sudut, pencahayaan, palet warna, gaya, mood... (atau biarkan AI Enhancer yang menentukan)"
+                  value={editingPrompt.visualDirection}
+                  onChange={(e) => setEditingPrompt({...editingPrompt, visualDirection: e.target.value})}
+                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                />
+              </div>
+
+              {aiNote && (
+                <div className="flex items-start justify-between gap-2 p-2.5 rounded-xl border border-purple-500/30 bg-purple-500/10 text-[11px] text-purple-200">
+                  <span className="flex-1"><Sparkles className="w-3 h-3 inline mr-1 -mt-0.5" />{aiNote}</span>
+                  {aiBackup && (
+                    <button type="button" onClick={restoreBeforeAi} className="shrink-0 underline text-purple-300">
+                      Kembalikan
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2">
                 <button 
                   type="button" 
@@ -1051,21 +1255,41 @@ function PromptVaultApp() {
             <div className="flex items-center space-x-2">
               <Sparkles className="w-4 h-4 text-purple-400" />
               <h3 className="text-sm font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Gemini AI Prompt Generator
+                Gemini AI Enhancer
               </h3>
             </div>
             
-            <p className="text-xs text-slate-300">
-              Tulis ide kasar prompt Anda, AI akan memperbaikinya menjadi prompt profesional.
-            </p>
-
-            <textarea 
-              rows={4}
-              placeholder="Contoh: Buatkan prompt untuk merangkum email bisnis secara profesional..." 
-              value={aiPromptInput}
-              onChange={(e) => setAiPromptInput(e.target.value)}
-              className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
-            />
+            {editingPrompt.content.trim() ? (
+              <>
+                <p className="text-xs text-slate-300">
+                  AI membaca prompt yang sedang kamu tulis, memperbaikinya, lalu menentukan arahan visualnya otomatis.
+                </p>
+                <div className={`p-2.5 rounded-xl border text-[11px] leading-relaxed max-h-28 overflow-y-auto ${isDark ? 'bg-slate-950/70 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                  <span className="text-slate-500">Dibaca dari prompt:</span>{' '}
+                  {editingPrompt.content.slice(0, 280)}{editingPrompt.content.length > 280 ? '…' : ''}
+                </div>
+                <textarea
+                  rows={2}
+                  placeholder="Arahan tambahan (opsional), mis: bikin lebih gelap dan sinematik"
+                  value={aiPromptInput}
+                  onChange={(e) => setAiPromptInput(e.target.value)}
+                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                />
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-slate-300">
+                  Isi prompt masih kosong. Tulis ide kasarnya di sini, AI akan menyusun prompt dan arahan visualnya.
+                </p>
+                <textarea
+                  rows={4}
+                  placeholder="Contoh: poster astronaut sendirian di padang bunga neon..."
+                  value={aiPromptInput}
+                  onChange={(e) => setAiPromptInput(e.target.value)}
+                  className={`w-full text-xs p-2.5 rounded-xl outline-none ${inputStyle}`}
+                />
+              </>
+            )}
 
             <div className="flex justify-end space-x-2 pt-2">
               <button 
@@ -1089,7 +1313,7 @@ function PromptVaultApp() {
                 ) : (
                   <>
                     <Zap className="w-3.5 h-3.5" />
-                    <span>Generate</span>
+                    <span>{editingPrompt.content.trim() ? 'Perbaiki & Arahkan' : 'Generate'}</span>
                   </>
                 )}
               </button>
@@ -1140,6 +1364,14 @@ function PromptVaultApp() {
                   onChange={(e) => setGeminiKey(e.target.value)}
                   className={`w-full text-xs p-2.5 rounded-xl outline-none font-mono ${inputStyle}`}
                 />
+                <input
+                  type="text"
+                  autoComplete="off"
+                  placeholder="Nama model (default gemini-3-flash-preview)"
+                  value={geminiModel}
+                  onChange={(e) => setGeminiModel(e.target.value)}
+                  className={`w-full text-xs p-2.5 mt-2 rounded-xl outline-none font-mono ${inputStyle}`}
+                />
                 <p className="text-[10px] text-slate-500 mt-1">Disimpan hanya di perangkat ini, tidak dikirim ke mana pun selain ke Google saat Generate.</p>
               </div>
 
@@ -1151,7 +1383,7 @@ function PromptVaultApp() {
                     className={`flex-1 py-2 rounded-xl text-xs flex items-center justify-center space-x-1 border ${isDark ? UI_STYLES.btnSecondaryDark : UI_STYLES.btnSecondaryLight}`}
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Ekspor / Bagikan Backup</span>
+                    <span>Ekspor CSV / Bagikan</span>
                   </button>
                   
                   <button 
@@ -1159,9 +1391,9 @@ function PromptVaultApp() {
                     className={`flex-1 py-2 rounded-xl text-xs flex items-center justify-center space-x-1 border ${isDark ? UI_STYLES.btnSecondaryDark : UI_STYLES.btnSecondaryLight}`}
                   >
                     <Upload className="w-3.5 h-3.5" />
-                    <span>Impor JSON</span>
+                    <span>Impor CSV</span>
                   </button>
-                  <input type="file" ref={fileInputRef} onChange={handleImportBackup} accept=".json" className="hidden" />
+                  <input type="file" ref={fileInputRef} onChange={handleImportBackup} accept=".csv,.json,text/csv,application/json" className="hidden" />
                 </div>
               </div>
 
